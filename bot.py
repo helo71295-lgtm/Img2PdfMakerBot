@@ -2,7 +2,7 @@ import io
 import os
 import logging
 from PIL import Image
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 # Dictionary to store uploaded images in memory per user: {user_id: [PIL.Image, ...]}
 user_images = {}
+
+
+async def post_init(application):
+    """Sets the bot command menu automatically on startup."""
+    commands = [
+        BotCommand("start", "Start the bot and view instructions"),
+        BotCommand("convert", "Convert uploaded images to PDF"),
+        BotCommand("clear", "Clear queued images"),
+        BotCommand("about", "Learn more about this bot"),
+        BotCommand("help", "Get help and instructions"),
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info("Bot command menu registered successfully!")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51,7 +64,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays information about the bot."""
     about_text = (
-        "ℹ️️ **About This Bot**\n\n"
+        "ℹ️ **About This Bot**\n\n"
         "This bot compiles your photos and image files into a high-quality PDF document instantly.\n\n"
         "🔒 **Privacy:** Uploaded images are processed temporarily in memory and automatically cleared once your PDF is generated."
     )
@@ -62,11 +75,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles photos sent directly."""
     user_id = update.effective_user.id
 
-    # Get the highest resolution photo sent
     photo_file = await update.message.photo[-1].get_file()
     image_bytes = await photo_file.download_as_bytearray()
 
-    # Open image using Pillow and convert to RGB (required for PDF conversion)
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
     if user_id not in user_images:
@@ -84,7 +95,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles uncompressed images sent as files/documents."""
     document = update.message.document
 
-    # Check if document is an image
     if not document.mime_type or not document.mime_type.startswith("image/"):
         await update.message.reply_text("❌ Please send a valid image file.")
         return
@@ -120,7 +130,6 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         images = user_images[user_id]
         pdf_bytes = io.BytesIO()
 
-        # Save first image as base PDF and append the rest
         first_image = images[0]
         remaining_images = images[1:] if len(images) > 1 else []
 
@@ -132,14 +141,12 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         pdf_bytes.seek(0)
 
-        # Send the created PDF to the user
         await update.message.reply_document(
             document=pdf_bytes,
             filename="converted_document.pdf",
             caption="🎉 Here is your converted PDF!"
         )
 
-        # Clear queue after success
         del user_images[user_id]
         await status_msg.delete()
 
@@ -168,26 +175,24 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def main():
-    # Read Telegram Bot Token from Environment Variable
     bot_token = os.environ.get("BOT_TOKEN")
 
     if not bot_token:
         raise ValueError("BOT_TOKEN environment variable is missing!")
 
-    app = ApplicationBuilder().token(bot_token).build()
+    # Attach post_init callback to register menu on startup
+    app = ApplicationBuilder().token(bot_token).post_init(post_init).build()
 
-    # 1. Command Handlers (must be registered FIRST)
+    # Register handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("convert", convert))
     app.add_handler(CommandHandler("clear", clear))
 
-    # 2. Message Handlers for Photos & Documents
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
 
-    # 3. Global Error Handler
     app.add_error_handler(error_handler)
 
     logger.info("Bot is running...")
