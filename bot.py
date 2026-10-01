@@ -1,13 +1,13 @@
 import io
 import os
 import logging
-from PIL import Image
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+from PIL import Image, ImageOps
+from telegram import Update, BotCommand
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -15,72 +15,52 @@ from telegram.ext import (
 # Configure logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# Dictionary to store uploaded images per user: {user_id: [PIL.Image, ...]}
+# Dictionary to store uploaded images in memory per user: {user_id: [PIL.Image, ...]}
 user_images = {}
 
 
-async def post_init(application):
-    """Sets the bot command menu automatically on startup."""
+async def post_init(application: Application) -> None:
+    """Set bot commands menu and clear pending webhooks automatically on startup."""
     commands = [
-        BotCommand("start", "Start the bot and view instructions"),
-        BotCommand("convert", "Convert uploaded images to PDF"),
-        BotCommand("clear", "Clear queued images"),
+        BotCommand("start", "Start the bot and see instructions"),
+        BotCommand("convert", "Compile uploaded images into a PDF"),
+        BotCommand("clear", "Remove all queued images"),
         BotCommand("about", "Learn more about this bot"),
-        BotCommand("help", "Get help and instructions"),
+        BotCommand("help", "Display help menu"),
     ]
     await application.bot.set_my_commands(commands)
-    logger.info("Bot command menu registered successfully!")
-
-
-def get_main_keyboard():
-    """Helper function to generate inline menu buttons."""
-    keyboard = [
-        [
-            InlineKeyboardButton("📄 Convert to PDF", callback_data="cmd_convert"),
-            InlineKeyboardButton("🗑️ Clear Queue", callback_data="cmd_clear"),
-        ],
-        [
-            InlineKeyboardButton("❓ Help", callback_data="cmd_help"),
-            InlineKeyboardButton("ℹ️ About", callback_data="cmd_about"),
-        ],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Bot commands set and webhooks cleared successfully.")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends welcome message with inline action buttons."""
+    """Sends welcome message and usage instructions."""
     welcome_text = (
         "👋 **Welcome to the Image to PDF Bot!**\n\n"
         "How to use:\n"
         "1. Send me one or multiple images (photos or image files).\n"
-        "2. Tap **Convert to PDF** below or type `/convert`.\n"
-        "3. Tap **Clear Queue** below or type `/clear` to reset."
+        "2. Tap `/convert` to compile them into a PDF.\n"
+        "3. Tap `/clear` if you want to reset your queue.\n"
+        "4. Tap `/about` to read more about this bot."
     )
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays available commands and help info."""
     help_text = (
         "📖 **Bot Help & Commands**\n\n"
-        "• Send photos or image files directly to add them to your queue.\n"
+        "• `/start` - Start the bot and see instructions\n"
         "• `/convert` - Build a PDF from your uploaded images\n"
         "• `/clear` - Remove all queued images\n"
         "• `/about` - About this bot\n"
         "• `/help` - Show this help menu"
     )
-    if update.callback_query:
-        await update.callback_query.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
-    else:
-        await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,20 +70,20 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "This bot compiles your photos and image files into a high-quality PDF document instantly.\n\n"
         "🔒 **Privacy:** Uploaded images are processed temporarily in memory and automatically cleared once your PDF is generated."
     )
-    if update.callback_query:
-        await update.callback_query.message.reply_text(about_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
-    else:
-        await update.message.reply_text(about_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    await update.message.reply_text(about_text, parse_mode="Markdown")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles photos sent directly."""
     user_id = update.effective_user.id
 
+    # Get the highest resolution photo sent
     photo_file = await update.message.photo[-1].get_file()
     image_bytes = await photo_file.download_as_bytearray()
 
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    # Open image, fix orientation based on EXIF metadata, and convert to RGB
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")
 
     if user_id not in user_images:
         user_images[user_id] = []
@@ -112,9 +92,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(user_images[user_id])
 
     await update.message.reply_text(
-        f"📸 Image {count} added! Send more or tap **Convert to PDF** when ready.",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
+        f"📸 Image {count} added! Send more or tap /convert when ready."
     )
 
 
@@ -130,7 +108,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc_file = await document.get_file()
     image_bytes = await doc_file.download_as_bytearray()
 
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")
 
     if user_id not in user_images:
         user_images[user_id] = []
@@ -139,22 +118,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(user_images[user_id])
 
     await update.message.reply_text(
-        f"📄 Image file {count} added! Send more or tap **Convert to PDF** when ready.",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
+        f"📄 Image file {count} added! Send more or tap /convert when ready."
     )
 
 
 async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Converts queued images into a single PDF file and sends it back."""
     user_id = update.effective_user.id
-    target_message = update.callback_query.message if update.callback_query else update.message
 
     if user_id not in user_images or not user_images[user_id]:
-        await target_message.reply_text("⚠️ No images found! Send some images first.")
+        await update.message.reply_text("⚠️ No images found! Send some images first.")
         return
 
-    status_msg = await target_message.reply_text("⚙️ Converting images to PDF...")
+    status_msg = await update.message.reply_text("⚙️ Converting images to PDF...")
 
     try:
         images = user_images[user_id]
@@ -167,49 +143,38 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pdf_bytes,
             format="PDF",
             save_all=True,
-            append_images=remaining_images
+            append_images=remaining_images,
         )
         pdf_bytes.seek(0)
 
-        await target_message.reply_document(
+        await update.message.reply_document(
             document=pdf_bytes,
             filename="converted_document.pdf",
-            caption="🎉 Here is your converted PDF!"
+            caption="🎉 Here is your converted PDF!",
         )
 
+        # Close Pillow images and clear queue
+        for img in images:
+            img.close()
         del user_images[user_id]
+
         await status_msg.delete()
 
     except Exception as e:
         logger.error(f"Error converting images to PDF: {e}")
-        await target_message.reply_text("❌ Failed to create PDF. Please try again.")
+        await update.message.reply_text("❌ Failed to create PDF. Please try again.")
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clears all queued images for the user."""
     user_id = update.effective_user.id
-    target_message = update.callback_query.message if update.callback_query else update.message
-
     if user_id in user_images and user_images[user_id]:
+        for img in user_images[user_id]:
+            img.close()
         del user_images[user_id]
-        await target_message.reply_text("🗑️ Cleared all queued images.")
+        await update.message.reply_text("🗑️ Cleared all queued images.")
     else:
-        await target_message.reply_text("ℹ️ Your image queue is already empty.")
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles button presses from inline keybaords."""
-    query = update.callback_query
-    await query.answer()  # Acknowledge button press
-
-    if query.data == "cmd_convert":
-        await convert(update, context)
-    elif query.data == "cmd_clear":
-        await clear(update, context)
-    elif query.data == "cmd_help":
-        await help_command(update, context)
-    elif query.data == "cmd_about":
-        await about(update, context)
+        await update.message.reply_text("ℹ️ Your image queue is already empty.")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -227,22 +192,25 @@ def main():
     if not bot_token:
         raise ValueError("BOT_TOKEN environment variable is missing!")
 
-    app = ApplicationBuilder().token(bot_token).post_init(post_init).build()
+    app = (
+        ApplicationBuilder()
+        .token(bot_token)
+        .post_init(post_init)  # Register post_init callback here
+        .build()
+    )
 
-    # Command Handlers
+    # 1. Command Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("convert", convert))
     app.add_handler(CommandHandler("clear", clear))
 
-    # Inline Button Callback Handler
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Message Handlers
+    # 2. Message Handlers
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
 
+    # 3. Global Error Handler
     app.add_error_handler(error_handler)
 
     logger.info("Bot is running...")
