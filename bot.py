@@ -2,11 +2,12 @@ import io
 import os
 import logging
 from PIL import Image
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -18,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Dictionary to store uploaded images in memory per user: {user_id: [PIL.Image, ...]}
+# Dictionary to store uploaded images per user: {user_id: [PIL.Image, ...]}
 user_images = {}
 
 
@@ -35,30 +36,51 @@ async def post_init(application):
     logger.info("Bot command menu registered successfully!")
 
 
+def get_main_keyboard():
+    """Helper function to generate inline menu buttons."""
+    keyboard = [
+        [
+            InlineKeyboardButton("📄 Convert to PDF", callback_data="cmd_convert"),
+            InlineKeyboardButton("🗑️ Clear Queue", callback_data="cmd_clear"),
+        ],
+        [
+            InlineKeyboardButton("❓ Help", callback_data="cmd_help"),
+            InlineKeyboardButton("ℹ️ About", callback_data="cmd_about"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends welcome message and usage instructions."""
+    """Sends welcome message with inline action buttons."""
     welcome_text = (
         "👋 **Welcome to the Image to PDF Bot!**\n\n"
         "How to use:\n"
         "1. Send me one or multiple images (photos or image files).\n"
-        "2. Tap `/convert` to compile them into a PDF.\n"
-        "3. Tap `/clear` if you want to reset your queue.\n"
-        "4. Tap `/about` to read more about this bot."
+        "2. Tap **Convert to PDF** below or type `/convert`.\n"
+        "3. Tap **Clear Queue** below or type `/clear` to reset."
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays available commands and help info."""
     help_text = (
         "📖 **Bot Help & Commands**\n\n"
-        "• `/start` - Start the bot and see instructions\n"
+        "• Send photos or image files directly to add them to your queue.\n"
         "• `/convert` - Build a PDF from your uploaded images\n"
         "• `/clear` - Remove all queued images\n"
         "• `/about` - About this bot\n"
         "• `/help` - Show this help menu"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    if update.callback_query:
+        await update.callback_query.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    else:
+        await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,7 +90,10 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "This bot compiles your photos and image files into a high-quality PDF document instantly.\n\n"
         "🔒 **Privacy:** Uploaded images are processed temporarily in memory and automatically cleared once your PDF is generated."
     )
-    await update.message.reply_text(about_text, parse_mode="Markdown")
+    if update.callback_query:
+        await update.callback_query.message.reply_text(about_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    else:
+        await update.message.reply_text(about_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -87,7 +112,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(user_images[user_id])
 
     await update.message.reply_text(
-        f"📸 Image {count} added! Send more or tap /convert when ready."
+        f"📸 Image {count} added! Send more or tap **Convert to PDF** when ready.",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
 
@@ -112,19 +139,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(user_images[user_id])
 
     await update.message.reply_text(
-        f"📄 Image file {count} added! Send more or tap /convert when ready."
+        f"📄 Image file {count} added! Send more or tap **Convert to PDF** when ready.",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
 
 async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Converts queued images into a single PDF file and sends it back."""
     user_id = update.effective_user.id
+    target_message = update.callback_query.message if update.callback_query else update.message
 
     if user_id not in user_images or not user_images[user_id]:
-        await update.message.reply_text("⚠️ No images found! Send some images first.")
+        await target_message.reply_text("⚠️ No images found! Send some images first.")
         return
 
-    status_msg = await update.message.reply_text("⚙️ Converting images to PDF...")
+    status_msg = await target_message.reply_text("⚙️ Converting images to PDF...")
 
     try:
         images = user_images[user_id]
@@ -141,7 +171,7 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         pdf_bytes.seek(0)
 
-        await update.message.reply_document(
+        await target_message.reply_document(
             document=pdf_bytes,
             filename="converted_document.pdf",
             caption="🎉 Here is your converted PDF!"
@@ -152,17 +182,34 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error converting images to PDF: {e}")
-        await update.message.reply_text("❌ Failed to create PDF. Please try again.")
+        await target_message.reply_text("❌ Failed to create PDF. Please try again.")
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clears all queued images for the user."""
     user_id = update.effective_user.id
+    target_message = update.callback_query.message if update.callback_query else update.message
+
     if user_id in user_images and user_images[user_id]:
         del user_images[user_id]
-        await update.message.reply_text("🗑️ Cleared all queued images.")
+        await target_message.reply_text("🗑️ Cleared all queued images.")
     else:
-        await update.message.reply_text("ℹ️ Your image queue is already empty.")
+        await target_message.reply_text("ℹ️ Your image queue is already empty.")
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles button presses from inline keybaords."""
+    query = update.callback_query
+    await query.answer()  # Acknowledge button press
+
+    if query.data == "cmd_convert":
+        await convert(update, context)
+    elif query.data == "cmd_clear":
+        await clear(update, context)
+    elif query.data == "cmd_help":
+        await help_command(update, context)
+    elif query.data == "cmd_about":
+        await about(update, context)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -180,16 +227,19 @@ def main():
     if not bot_token:
         raise ValueError("BOT_TOKEN environment variable is missing!")
 
-    # Attach post_init callback to register menu on startup
     app = ApplicationBuilder().token(bot_token).post_init(post_init).build()
 
-    # Register handlers
+    # Command Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("convert", convert))
     app.add_handler(CommandHandler("clear", clear))
 
+    # Inline Button Callback Handler
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    # Message Handlers
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
 
