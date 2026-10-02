@@ -19,7 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Dictionary to store uploaded images in memory per user: {user_id: [PIL.Image, ...]}
 user_images = {}
 
 
@@ -40,7 +39,7 @@ async def post_init(application: Application) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends welcome message and usage instructions."""
     welcome_text = (
-        "👋 **Welcome to the Image to PDF Bot!**\n\n"
+        "👋 **Welcome to Image to PDF Maker Bot!**\n\n"
         "How to use:\n"
         "1. Send me one or multiple images (photos or image files).\n"
         "2. Tap `/convert` to compile them into a PDF.\n"
@@ -77,11 +76,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles photos sent directly."""
     user_id = update.effective_user.id
 
-    # Get the highest resolution photo sent
     photo_file = await update.message.photo[-1].get_file()
     image_bytes = await photo_file.download_as_bytearray()
 
-    # Open image, fix orientation based on EXIF metadata, and convert to RGB
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")
 
@@ -153,7 +150,6 @@ async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="🎉 Here is your converted PDF!",
         )
 
-        # Close Pillow images and clear queue
         for img in images:
             img.close()
         del user_images[user_id]
@@ -195,22 +191,19 @@ def main():
     app = (
         ApplicationBuilder()
         .token(bot_token)
-        .post_init(post_init)  # Register post_init callback here
+        .post_init(post_init)
         .build()
     )
 
-    # 1. Command Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("convert", convert))
     app.add_handler(CommandHandler("clear", clear))
 
-    # 2. Message Handlers
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
 
-    # 3. Global Error Handler
     app.add_error_handler(error_handler)
 
     logger.info("Bot is running...")
