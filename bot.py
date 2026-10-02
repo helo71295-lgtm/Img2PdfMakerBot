@@ -37,14 +37,15 @@ async def post_init(application: Application) -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends welcome message and usage instructions."""
+    """Sends bilingual welcome message."""
     welcome_text = (
-        "👋 **Welcome to Image to PDF Maker Bot!**\n\n"
-        "How to use:\n"
-        "1. Send me one or multiple images (photos or image files).\n"
-        "2. Tap `/convert` to compile them into a PDF.\n"
-        "3. Tap `/clear` if you want to reset your queue.\n"
-        "4. Tap `/about` to read more about this bot."
+        "👋 **សូមស្វាគមន៍មកកាន់ Image to PDF Bot!**\n"
+        "(Welcome to Image to PDF Bot)\n\n"
+        "**របៀបប្រើប្រាស់ (How to use):**\n"
+        "1. ផ្ញើរូបថត ១ ឬច្រើនសន្លឹកចូលទីនេះ (Send me your images).\n"
+        "2. ចុច `/convert` ដើម្បីបង្កើតជាឯកសារ PDF (Tap `/convert` to make PDF).\n"
+        "3. ចុច `/clear` ដើម្បីលុបរូបដែលបានផ្ញើ (Tap `/clear` to reset).\n"
+        "4. ចុច `/about` ដើម្បីមើលព័ត៌មានបន្ថែម (Tap `/about` for details)."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
